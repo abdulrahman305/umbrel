@@ -70,7 +70,7 @@
 		"compose-spec-schema": "^1.0.0",
 		"cookie-parser": "^1.4.6",
 		"cors": "2.8.5",
-		"dockerode": "^4.0.2",
+		"dockerode": "^4.0.5",
 		"dot-prop": "^7.2.0",
 		"drivelist": "^12.0.2",
 		"emittery": "^1.1.0",
