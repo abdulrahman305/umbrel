@@ -50,7 +50,7 @@
 		"tcp-port-used": "^1.0.2",
 		"tough-cookie": "^5.1.2",
 		"typescript": "^5.8.3",
-		"vitest": "^2.1.2",
+		"vitest": "^2.1.9",
 		"wait-port": "^1.0.4"
 	},
 	"dependencies": {
