@@ -14,6 +14,9 @@ dependencies:
   '@dnd-kit/utilities':
     specifier: ^3.2.2
     version: 3.2.2(react@18.2.0)
+  '@hookform/resolvers':
+    specifier: 5.1.1
+    version: 5.1.1(react-hook-form@7.61.0)
   '@radix-ui/react-checkbox':
     specifier: ^1.0.4
     version: 1.0.4(@types/react-dom@18.2.14)(@types/react@18.2.31)(react-dom@18.2.0)(react@18.2.0)
@@ -155,6 +158,9 @@ dependencies:
   react-error-boundary:
     specifier: ^4.0.11
     version: 4.0.11(react@18.2.0)
+  react-hook-form:
+    specifier: 7.61.0
+    version: 7.61.0(react@18.2.0)
   react-i18next:
     specifier: 13.3.1
     version: 13.3.1(i18next@23.6.0)(react-dom@18.2.0)(react@18.2.0)
@@ -218,6 +224,9 @@ dependencies:
   vaul:
     specifier: ^0.9.0
     version: 0.9.0(@types/react-dom@18.2.14)(@types/react@18.2.31)(react-dom@18.2.0)(react@18.2.0)
+  zod:
+    specifier: 4.0.8
+    version: 4.0.8
   zustand:
     specifier: ^5.0.2
     version: 5.0.2(@types/react@18.2.31)(react@18.2.0)
@@ -295,6 +304,9 @@ devDependencies:
   eslint-plugin-react-refresh:
     specifier: ^0.4.3
     version: 0.4.3(eslint@8.52.0)
+  eslint-plugin-tailwindcss:
+    specifier: ^3.18.0
+    version: 3.18.0(tailwindcss@3.4.1)
   fast-glob:
     specifier: ^3.3.2
     version: 3.3.2
@@ -325,6 +337,9 @@ devDependencies:
   tailwindcss-animate:
     specifier: 1.0.7
     version: 1.0.7(tailwindcss@3.4.1)
+  tailwindcss-radix:
+    specifier: ^4.0.2
+    version: 4.0.2(tailwindcss@3.4.1)
   ts-plugin-sort-import-suggestions:
     specifier: ^1.0.4
     version: 1.0.4
@@ -915,6 +930,15 @@ packages:
 
   /@floating-ui/utils@0.1.6:
     resolution: {integrity: sha512-OfX7E2oUDYxtBvsuS4e/jSn4Q9Qb6DzgeYtsAdkPZ47znpoNsMgZw0+tVijiv3uGNR6dgNlty6r9rzIzHjtd/A==}
+    dev: false
+
+  /@hookform/resolvers@5.1.1(react-hook-form@7.61.0):
+    resolution: {integrity: sha512-J/NVING3LMAEvexJkyTLjruSm7aOFx7QX21pzkiJfMoNG0wl5aFEjLTl7ay7IQb9EWY6AkrBy7tHL2Alijpdcg==}
+    peerDependencies:
+      react-hook-form: ^7.55.0
+    dependencies:
+      '@standard-schema/utils': 0.3.0
+      react-hook-form: 7.61.0(react@18.2.0)
     dev: false
 
   /@humanwhocodes/config-array@0.11.13:
@@ -2967,6 +2991,10 @@ packages:
       picomatch: 4.0.2
     dev: true
 
+  /@standard-schema/utils@0.3.0:
+    resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
+    dev: false
+
   /@swc/core-darwin-arm64@1.3.94:
     resolution: {integrity: sha512-KNuE6opIy/wAXiGUWLhGWhCG3wA/AdjG6eYkv6dstrAURLaQMAoD8vDfVm8pxS8FA8Kx+0Z4QiDNPqk5aKIsqg==}
     engines: {node: '>=10'}
@@ -4687,6 +4715,17 @@ packages:
       resolve: 2.0.0-next.5
       semver: 6.3.1
       string.prototype.matchall: 4.0.10
+    dev: true
+
+  /eslint-plugin-tailwindcss@3.18.0(tailwindcss@3.4.1):
+    resolution: {integrity: sha512-PQDU4ZMzFH0eb2DrfHPpbgo87Zgg2EXSMOj1NSfzdZm+aJzpuwGerfowMIaVehSREEa0idbf/eoNYAOHSJoDAQ==}
+    engines: {node: '>=18.12.0'}
+    peerDependencies:
+      tailwindcss: ^3.4.0
+    dependencies:
+      fast-glob: 3.3.2
+      postcss: 8.4.31
+      tailwindcss: 3.4.1
     dev: true
 
   /eslint-scope@5.1.1:
@@ -6987,6 +7026,15 @@ packages:
       react: 18.2.0
     dev: false
 
+  /react-hook-form@7.61.0(react@18.2.0):
+    resolution: {integrity: sha512-o8S/HcCeuaAQVib36fPCgOLaaQN/v7Anj8zlYjcLMcz+4FnNfMsoDAEvVCefLb3KDnS43wq3pwcifehhkwowuQ==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      react: ^16.8.0 || ^17 || ^18 || ^19
+    dependencies:
+      react: 18.2.0
+    dev: false
+
   /react-i18next@13.3.1(i18next@23.6.0)(react-dom@18.2.0)(react@18.2.0):
     resolution: {integrity: sha512-JAtYREK879JXaN9GdzfBI4yJeo/XyLeXWUsRABvYXiFUakhZJ40l+kaTo+i+A/3cKIED41kS/HAbZ5BzFtq/Og==}
     peerDependencies:
@@ -7974,6 +8022,15 @@ packages:
       tailwindcss: 3.4.1
     dev: true
 
+  /tailwindcss-radix@4.0.2(tailwindcss@3.4.1):
+    resolution: {integrity: sha512-Uoa2BUCfWKGCjQPXbj4X4Q4EWAeCsvhj0udn0IupeNcvuLbqRXvC5+bKAqsngIne5mrRUPTy/IqMXGh81YyrCA==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      tailwindcss: ^3.0 || ^4.0
+    dependencies:
+      tailwindcss: 3.4.1
+    dev: true
+
   /tailwindcss@3.4.1:
     resolution: {integrity: sha512-qAYmXRfk3ENzuPBakNK0SRrUDipP8NQnEY6772uDhflcQz5EhRdD7JNZxyrFHVQNCwULPBn6FNPp9brpO7ctcA==}
     engines: {node: '>=14.0.0'}
@@ -8638,6 +8695,10 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
     dev: true
+
+  /zod@4.0.8:
+    resolution: {integrity: sha512-+MSh9cZU9r3QKlHqrgHMTSr3QwMGv4PLfR0M4N/sYWV5/x67HgXEhIGObdBkpnX8G78pTgWnIrBL2lZcNJOtfg==}
+    dev: false
 
   /zustand@5.0.2(@types/react@18.2.31)(react@18.2.0):
     resolution: {integrity: sha512-8qNdnJVJlHlrKXi50LDqqUNmUbuBjoKLrYQBnoChIbVph7vni+sY+YpvdjXG9YLd/Bxr6scMcR+rm5H3aSqPaw==}
