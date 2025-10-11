@@ -1,12 +1,11 @@
 import {zodResolver} from '@hookform/resolvers/zod'
 import {formatDistanceToNow} from 'date-fns'
-import {AlertOctagon, ArrowLeft, ChevronDown, Plus, Server} from 'lucide-react'
+import {AlertOctagon, ArrowLeft, ChevronDown, Loader2, Plus, Server} from 'lucide-react'
 import {useMemo, useState} from 'react'
 import {FormProvider, useForm, type Resolver, type SubmitHandler} from 'react-hook-form'
 import {Trans} from 'react-i18next/TransWithoutContext'
 import {TbCalendarTime, TbDatabase} from 'react-icons/tb'
 import {Link} from 'react-router-dom'
-import {toast} from 'sonner'
 import {z} from 'zod'
 
 import {ErrorAlert} from '@/components/ui/alert'
@@ -22,6 +21,7 @@ import {
 	useRestoreBackup as useBackupsRestore,
 	useRepositoryBackups,
 } from '@/features/backups/hooks/use-backups'
+import {isRepoConnected} from '@/features/backups/utils/backup-location-helpers'
 import {
 	BACKUP_FILE_NAME,
 	getDisplayRepositoryPath,
@@ -30,6 +30,8 @@ import {
 } from '@/features/backups/utils/filepath-helpers'
 import AddNetworkShareDialog from '@/features/files/components/dialogs/add-network-share-dialog'
 import {MiniBrowser} from '@/features/files/components/mini-browser'
+import {useExternalStorage} from '@/features/files/hooks/use-external-storage'
+import {useNetworkStorage} from '@/features/files/hooks/use-network-storage'
 import {formatFilesystemDate} from '@/features/files/utils/format-filesystem-date'
 import {formatFilesystemSize} from '@/features/files/utils/format-filesystem-size'
 import {useLanguage} from '@/hooks/use-language'
@@ -110,6 +112,7 @@ export function BackupsRestoreWizard() {
 	const [confirmOpen, setConfirmOpen] = useState(false)
 	const [confirmPassword, setConfirmPassword] = useState('')
 	const [confirmError, setConfirmError] = useState('')
+	const [isStartingRestore, setIsStartingRestore] = useState(false)
 
 	const form = useForm<RestoreWizardValues>({
 		resolver: zodResolver(wizardExistingSchema as any) as unknown as Resolver<RestoreWizardValues>,
@@ -148,14 +151,14 @@ export function BackupsRestoreWizard() {
 		step === Step.Repository
 			? repoMode === 'known'
 				? !!repositoryId
-				: manualPath.trim().length > 0 && manualPassword.trim().length > 0
+				: manualPath.trim().length > 0 && manualPassword.trim().length > 0 && manualPath.endsWith(BACKUP_FILE_NAME)
 			: step === Step.Backups
 				? !!backupId
 				: true
 
 	// Start restore mutation
-	const restoreMutation = useBackupsRestore()
-	const connectMutation = useBackupsConnect()
+	const {restoreBackup} = useBackupsRestore()
+	const {connectToRepository, isPending: isConnecting} = useBackupsConnect()
 	const verifyPasswordMutation = trpcReact.user.login.useMutation()
 
 	// Step-scoped validation before next
@@ -170,12 +173,17 @@ export function BackupsRestoreWizard() {
 			// Attempt to connect to a manually specified repository
 			try {
 				// Route enforces auth when a user exists; otherwise allowed during recovery
-				const id = await connectMutation.mutateAsync({path: manualPath.trim(), password: manualPassword})
+				// Extract parent directory from backup file path
+				const path = manualPath.trim()
+				const repositoryPath = path.endsWith(BACKUP_FILE_NAME)
+					? path.slice(0, -BACKUP_FILE_NAME.length).replace(/\/$/, '') || '/'
+					: path
+				const id = await connectToRepository({path: repositoryPath, password: manualPassword})
 				form.setValue('repositoryId', id, {shouldValidate: true})
 				setStep(Step.Backups)
 				return
-			} catch (error: any) {
-				toast.error(error?.message || t('backups-restore.failed-to-connect'))
+			} catch {
+				// Error toasts are handled in the hook; remain on this step
 				return
 			}
 		}
@@ -203,12 +211,12 @@ export function BackupsRestoreWizard() {
 
 	// Final submit: start restore
 	const onSubmit: SubmitHandler<RestoreWizardValues> = async (values) => {
+		const {backupId} = values
+		if (!backupId) return
 		try {
-			const {backupId} = values
-			if (!backupId) return
-			await restoreMutation.mutateAsync({backupId})
-		} catch (error: any) {
-			toast.error(error?.message || t('backups-restore.failed-to-start'))
+			await restoreBackup(backupId)
+		} catch {
+			// Error toasts are handled in the hook; remain on this step
 		}
 	}
 
@@ -216,13 +224,18 @@ export function BackupsRestoreWizard() {
 		try {
 			setConfirmError('')
 			if (!confirmPassword.trim()) return
+
+			setIsStartingRestore(true)
 			// Verify password without altering auth state
 			await verifyPasswordMutation.mutateAsync({password: confirmPassword})
+			await onSubmit({repositoryId: '', backupId: backupId || ''})
+			// Only close dialog on successful restore
 			setConfirmOpen(false)
 			setConfirmPassword('')
-			await onSubmit({repositoryId: '', backupId: backupId || ''})
 		} catch (error: any) {
 			setConfirmError(error?.message || t('backups-restore.invalid-password'))
+		} finally {
+			setIsStartingRestore(false)
 		}
 	}
 
@@ -286,20 +299,20 @@ export function BackupsRestoreWizard() {
 							variant='primary'
 							size='dialog'
 							onClick={next}
-							disabled={!canNext}
+							disabled={!canNext || isConnecting}
 							className='min-w-0 max-md:w-full'
 						>
-							{t('continue')}
+							<span className={isConnecting ? 'opacity-0' : 'opacity-100'}>{t('continue')}</span>
+							{isConnecting && <Loader2 className='absolute h-4 w-4 animate-spin' />}
 						</Button>
 					) : (
 						<Button
 							variant='destructive'
 							size='dialog'
 							onClick={() => setConfirmOpen(true)}
-							disabled={restoreMutation.isPending}
 							className='min-w-0 max-md:w-full'
 						>
-							{restoreMutation.isPending ? t('backups-restore.restoring') : t('backups-restore.restore-umbrel')}
+							{t('backups-restore.restore-umbrel')}
 						</Button>
 					)}
 				</div>
@@ -332,10 +345,14 @@ export function BackupsRestoreWizard() {
 							<AlertDialogCancel>{t('cancel')}</AlertDialogCancel>
 							<AlertDialogAction
 								variant='destructive'
-								disabled={!confirmPassword.trim()}
+								disabled={!confirmPassword.trim() || isStartingRestore}
 								onClick={handleConfirmRestore}
+								hideEnterIcon={true}
 							>
-								{t('backups-restore.restore-umbrel')}
+								<span className={isStartingRestore ? 'opacity-0' : 'opacity-100'}>
+									{t('backups-restore.restore-umbrel')}
+								</span>
+								{isStartingRestore && <Loader2 className='absolute h-4 w-4 animate-spin' />}
 							</AlertDialogAction>
 						</AlertDialogFooter>
 					</AlertDialogContent>
@@ -372,7 +389,14 @@ function RepositoryStep({
 	manualPassword: string
 	onManualPasswordChange: (v: string) => void
 }) {
-	const renderIcon = (path: string) => <BackupDeviceIcon path={path} className='h-8 w-8 opacity-90' />
+	const {doesHostHaveMountedShares} = useNetworkStorage()
+	const {disks} = useExternalStorage()
+	const isConnected = (path: string) => isRepoConnected(path, doesHostHaveMountedShares, disks as any)
+	const renderIcon = (path: string) => (
+		<>
+			<BackupDeviceIcon path={path} connected={isConnected(path)} className='h-8 w-8 opacity-90' />
+		</>
+	)
 
 	const repoName = (path: string) => getRepositoryDisplayName(path) || t('unknown')
 
@@ -398,15 +422,38 @@ function RepositoryStep({
 									{repositories.map((repo) => {
 										const selected = repo.id === selectedId
 										return (
+											// We do not allow continuing with a disconnected device. If not connected,the row is visually disabled and non-interactive.
 											<div
 												key={repo.id}
 												className={[
-													'flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-4 transition-colors',
-													selected ? 'border-brand bg-brand/15' : 'border-white/10 bg-white/5 hover:bg-white/10',
+													'flex w-full min-w-0 items-center gap-3 rounded-xl border p-4 transition-colors',
+													selected
+														? 'border-brand bg-brand/15'
+														: isConnected(repo.path)
+															? 'cursor-pointer border-white/10 bg-white/5 hover:bg-white/10'
+															: 'cursor-not-allowed border-white/10 bg-white/5 opacity-60',
 												].join(' ')}
-												onClick={() => onSelect(repo.id)}
+												onClick={() => {
+													if (!isConnected(repo.path)) return
+													onSelect(repo.id)
+												}}
+												aria-disabled={!isConnected(repo.path)}
+												tabIndex={isConnected(repo.path) ? 0 : -1}
+												title={!isConnected(repo.path) ? t('backups-configure.not-connected') : undefined}
 											>
-												{renderIcon(repo.path)}
+												<div className='flex items-center gap-2'>
+													{/* Connection dot like Configure */}
+													<div
+														className='grid size-3 place-items-center rounded-full'
+														style={{backgroundColor: isConnected(repo.path) ? '#299E163D' : '#DF1F1F3D'}}
+													>
+														<div
+															className='size-1.5 rounded-full'
+															style={{backgroundColor: isConnected(repo.path) ? '#299E16' : '#DF1F1F'}}
+														/>
+													</div>
+													{renderIcon(repo.path)}
+												</div>
 												<div className='min-w-0 flex-1'>
 													<div className='whitespace-normal break-words text-sm' title={repo.path}>
 														<span className='font-medium'>{repoName(repo.path)}</span>
@@ -459,17 +506,18 @@ function RepositoryStep({
 						</div>
 						<div>
 							<div className='mb-2 text-sm font-medium'>{t('backups-restore.backup-location')}</div>
-							<div className='mb-2 mt-1 text-[12px] opacity-60'>
-								{t('backups-restore.select-folder-contains-backup', {backupFileName: BACKUP_FILE_NAME})}
-							</div>
 							<div className='relative'>
 								<Input
 									type='text'
 									value={manualPath}
 									readOnly
-									className='cursor-pointer select-none pr-28'
+									className={(manualPath ? 'cursor-pointer ' : 'cursor-default ') + 'select-none pr-28'}
 									title={manualPath || ''}
+									aria-disabled={!manualPath}
+									tabIndex={manualPath ? 0 : -1}
 									onClick={() => {
+										// We don't allow opening the browser by clicking the input if it is blank (user must click the dropdown to choose nas/external)
+										if (!manualPath) return
 										// Default to Network if no path is set, otherwise determine from current path
 										const root = manualPath?.startsWith('/Network') ? '/Network' : '/External'
 										setBrowserRoot(root)
@@ -519,7 +567,18 @@ function RepositoryStep({
 							onOpenPath={manualPath || browserRoot || '/'}
 							preselectOnOpen={true}
 							selectionMode='folders'
-							title={t('backups.select-backup-folder')}
+							title={t('backups-restore.select-backup-file')}
+							subtitle={
+								<Trans
+									i18nKey='backups-restore.select-backup-file-only'
+									values={{backupFileName: BACKUP_FILE_NAME}}
+									components={{
+										bold: <span className='text-brand-lightest' />,
+									}}
+								/>
+							}
+							// only allow selecting the backup file
+							selectableFilter={(entry) => entry.name === BACKUP_FILE_NAME}
 							onSelect={(p) => {
 								onManualPathChange(p)
 								setBrowserOpen(false)
@@ -601,7 +660,7 @@ function BackupsStep({
 									<div
 										key={id || Math.random()}
 										className={[
-											'group relative flex w-full cursor-pointer items-center gap-4 rounded-12 px-3 py-2 transition-all duration-200 md:px-4 md:py-3.5',
+											'group relative flex w-full cursor-pointer items-center gap-4 rounded-12 px-3 py-2 md:px-4 md:py-3.5',
 											selected
 												? 'bg-gradient-to-r from-brand/20 to-brand/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1)]'
 												: 'hover:bg-white/[0.06]',
@@ -614,7 +673,7 @@ function BackupsStep({
 											{/* Outer ring */}
 											<div
 												className={[
-													'absolute inset-0 rounded-full transition-all duration-300',
+													'absolute inset-0 rounded-full',
 													selected
 														? 'bg-gradient-to-br from-brand to-brand/60 shadow-[0_0_20px_rgba(var(--color-brand-rgb),0.3)]'
 														: 'bg-white/10 group-hover:bg-white/15',
@@ -624,7 +683,7 @@ function BackupsStep({
 											{/* Inner dot */}
 											<div
 												className={[
-													'relative size-4 rounded-full transition-all duration-300',
+													'relative size-4 rounded-full',
 													selected
 														? 'bg-white shadow-[0_0_10px_rgba(255,255,255,0.5)]'
 														: 'bg-white/20 group-hover:bg-white/30',

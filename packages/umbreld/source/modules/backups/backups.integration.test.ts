@@ -2,11 +2,13 @@ import {setTimeout} from 'node:timers/promises'
 
 import {expect, test, beforeEach, afterEach, vi} from 'vitest'
 import fse from 'fs-extra'
+import yaml from 'js-yaml'
 import {execa} from 'execa'
 import pRetry from 'p-retry'
 
 import createTestUmbreld from '../test-utilities/create-test-umbreld.js'
 import * as system from '../system/system.js'
+import type {AppManifest} from '../apps/schema.js'
 
 let umbreld: Awaited<ReturnType<typeof createTestUmbreld>>
 
@@ -485,6 +487,63 @@ test('backups respect user ignored paths', async () => {
 	expect(files).toContain('home')
 })
 
+test.only('backups respect app backupIgnore glob patterns', async () => {
+	// Install app
+	await expect(umbreld.client.apps.install.mutate({appId: 'sparkles-hello-world'})).resolves.toStrictEqual(true)
+
+	// Create files in the app's data directory
+	const appDataDir = `${umbreld.instance.dataDirectory}/app-data/sparkles-hello-world`
+	await fse.mkdir(`${appDataDir}/logs`, {recursive: true})
+	await fse.mkdir(`${appDataDir}/important-data`, {recursive: true})
+	await fse.writeFile(`${appDataDir}/logs/app.log`, 'log content')
+	await fse.writeFile(`${appDataDir}/important-data/config.json`, 'important config')
+
+	// Modify the app's manifest to include a logs/* glob pattern for backupIgnore
+	const manifestPath = `${appDataDir}/umbrel-app.yml`
+	const manifest = yaml.load(await fse.readFile(manifestPath, 'utf8')) as AppManifest
+	manifest.backupIgnore = ['logs/*']
+	await fse.writeFile(manifestPath, yaml.dump(manifest))
+
+	// Create a network share and mount it
+	const backupNetworkSharePath = await createBackupShare(umbreld)
+
+	// Create a new backup repository
+	const repositoryId = await umbreld.client.backups.createRepository.mutate({
+		path: backupNetworkSharePath,
+		password: 'test-password',
+	})
+
+	// Do the backup
+	await expect(umbreld.client.backups.backup.mutate({repositoryId})).resolves.toBe(true)
+
+	// Verify backup was created and includes app-data
+	let backups = await umbreld.client.backups.listBackups.query({repositoryId})
+	expect(backups).toHaveLength(1)
+	let files = await umbreld.client.backups.listBackupFiles.query({backupId: backups[0].id})
+	expect(files).toContain('app-data')
+
+	// Verify logs directory exists but its contents are ignored by the glob
+	const appDirFiles = await umbreld.client.backups.listBackupFiles.query({
+		backupId: backups[0].id,
+		path: '/app-data/sparkles-hello-world',
+	})
+	expect(appDirFiles).toContain('logs')
+	expect(appDirFiles).toContain('important-data')
+
+	const logsDirFiles = await umbreld.client.backups.listBackupFiles.query({
+		backupId: backups[0].id,
+		path: '/app-data/sparkles-hello-world/logs',
+	})
+	expect(logsDirFiles).not.toContain('app.log')
+
+	// Verify that non-globbed files are included in the backup
+	const importantDirFiles = await umbreld.client.backups.listBackupFiles.query({
+		backupId: backups[0].id,
+		path: '/app-data/sparkles-hello-world/important-data',
+	})
+	expect(importantDirFiles).toContain('config.json')
+})
+
 test('backups adds Downloads to ignore on first run but allows users to remove it', async () => {
 	// Check /Home/Downloads is listed as ignored by default
 	await expect(umbreld.client.backups.getIgnoredPaths.query()).resolves.toContain('/Home/Downloads')
@@ -606,11 +665,26 @@ test('backups sets user notification if backups have not run in over 24 hours', 
 	// Set frequent backup interval
 	umbreld.instance.backups.backupInterval = 100 // 100ms
 
+	// Wait for some backup attempts
+	await setTimeout(30000)
+
+	// Verify we still have no notifications
+	// (we shouldn't have a notification unless 24 hours has passed)
+	await expect(umbreld.client.notifications.get.query()).resolves.toHaveLength(0)
+
+	// Mock time 24 hours in the future to trigger the notification
+	const now = Date.now()
+	const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
+	const viNow = vi.spyOn(Date, 'now').mockImplementation(() => now + TWENTY_FOUR_HOURS)
+
 	// Verify we have a notification
 	await pRetry(() => expect(umbreld.client.notifications.get.query()).resolves.toStrictEqual(['backups-failing']), {
 		retries: 30,
 		factor: 1,
 	})
+
+	// Unmock time
+	viNow.mockRestore()
 
 	// Stop excessive backups
 	umbreld.instance.backups.backupInterval = 1000000
@@ -671,16 +745,21 @@ test('backup can be restored on the current Umbrel install', async () => {
 	await umbreld.client.backups.restoreBackup.mutate({backupId: latestBackup.id})
 
 	// Verify we received progress events
-	expect(restoreProgressEvents.at(0)).toMatchObject({backupId: latestBackup.id, percent: 0})
+	expect(restoreProgressEvents.at(0)).toMatchObject({backupId: latestBackup.id, progress: 0, running: true})
 	expect(restoreProgressEvents.at(-2)).toMatchObject({
 		backupId: latestBackup.id,
-		percent: expect.any(Number),
+		progress: expect.any(Number),
 		bytesPerSecond: expect.any(Number),
+		running: true,
 	})
-	expect(restoreProgressEvents.at(-1)).toBeNull()
+	expect(restoreProgressEvents.at(-1)).toMatchObject({running: false, progress: 100, error: false})
 
-	// Verify current progress is undefined
-	await expect(umbreld.client.backups.restoreProgress.query()).resolves.toBe(null)
+	// Verify current progress is not running (final status is 100% after success)
+	await expect(umbreld.client.backups.restoreStatus.query()).resolves.toMatchObject({
+		running: false,
+		progress: 100,
+		error: false,
+	})
 
 	// Check we have no marker file
 	expect(await fse.pathExists(`${umbreld.instance.dataDirectory}/home/original-umbrel`)).toBe(false)
@@ -744,16 +823,21 @@ test('backup can be restored on a fresh umbrel during setup', async () => {
 	await newUmbreld.client.backups.restoreBackup.mutate({backupId: latestBackup.id})
 
 	// Verify we received progress events
-	expect(restoreProgressEvents.at(0)).toMatchObject({backupId: latestBackup.id, percent: 0})
+	expect(restoreProgressEvents.at(0)).toMatchObject({backupId: latestBackup.id, progress: 0, running: true})
 	expect(restoreProgressEvents.at(-2)).toMatchObject({
 		backupId: latestBackup.id,
-		percent: expect.any(Number),
+		progress: expect.any(Number),
 		bytesPerSecond: expect.any(Number),
+		running: true,
 	})
-	expect(restoreProgressEvents.at(-1)).toBeNull()
+	expect(restoreProgressEvents.at(-1)).toMatchObject({running: false, progress: 100, error: false})
 
-	// Verify current progress is undefined
-	await expect(newUmbreld.client.backups.restoreProgress.query()).resolves.toBe(null)
+	// Verify current progress is not running (final status is 100% after success)
+	await expect(newUmbreld.client.backups.restoreStatus.query()).resolves.toMatchObject({
+		running: false,
+		progress: 100,
+		error: false,
+	})
 
 	// Check we have no user and no marker file
 	await expect(newUmbreld.client.user.exists.query()).resolves.toBe(false)
