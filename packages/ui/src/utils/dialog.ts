@@ -6,9 +6,9 @@ import {useQueryParams} from '@/hooks/use-query-params'
 import {SettingsDialogKey} from '@/routes/settings'
 import {sleep} from '@/utils/misc'
 
-export const EXIT_DURATION_MS = 200
+export const EXIT_DURATION_MS = 100
 
-export type GlobalDialogKey = 'logout' | 'live-usage'
+export type GlobalDialogKey = 'logout' | 'live-usage' | 'whats-new'
 export type AppStoreDialogKey = 'updates' | 'add-community-store' | 'default-credentials' | 'app-settings'
 export type FilesDialogKey =
 	| 'files-share-info'
@@ -17,6 +17,7 @@ export type FilesDialogKey =
 	| 'files-permanently-delete-confirmation'
 	| 'files-external-storage-unsupported'
 	| 'files-add-network-share'
+	| 'files-format-drive'
 export type DialogKey = GlobalDialogKey | AppStoreDialogKey | SettingsDialogKey | FilesDialogKey
 
 // TODO: make dialog query params typesafe

@@ -7,6 +7,7 @@ import {execa} from 'execa'
 import pRetry from 'p-retry'
 
 import createTestUmbreld from '../test-utilities/create-test-umbreld.js'
+import {BACKUP_RESTORE_FIRST_START_FLAG} from '../../constants.js'
 import * as system from '../system/system.js'
 import type {AppManifest} from '../apps/schema.js'
 
@@ -487,7 +488,7 @@ test('backups respect user ignored paths', async () => {
 	expect(files).toContain('home')
 })
 
-test.only('backups respect app backupIgnore glob patterns', async () => {
+test('backups respect app backupIgnore glob patterns', async () => {
 	// Install app
 	await expect(umbreld.client.apps.install.mutate({appId: 'sparkles-hello-world'})).resolves.toStrictEqual(true)
 
@@ -542,24 +543,6 @@ test.only('backups respect app backupIgnore glob patterns', async () => {
 		path: '/app-data/sparkles-hello-world/important-data',
 	})
 	expect(importantDirFiles).toContain('config.json')
-})
-
-test('backups adds Downloads to ignore on first run but allows users to remove it', async () => {
-	// Check /Home/Downloads is listed as ignored by default
-	await expect(umbreld.client.backups.getIgnoredPaths.query()).resolves.toContain('/Home/Downloads')
-
-	// Manually remove /Home/Downloads from ignore
-	await expect(umbreld.client.backups.removeIgnoredPath.mutate({path: '/Home/Downloads'})).resolves.toBe(true)
-
-	// Check /Home/Downloads is no longer listed as ignored
-	await expect(umbreld.client.backups.getIgnoredPaths.query()).resolves.not.toContain('/Home/Downloads')
-
-	// Restart umbreld
-	await umbreld.instance.stop()
-	await umbreld.instance.start()
-
-	// Check /Home/Downloads is still not listed as ignored and hasn't been added again
-	await expect(umbreld.client.backups.getIgnoredPaths.query()).resolves.not.toContain('/Home/Downloads')
 })
 
 test('backups handle disconnected network shares gracefully', async () => {
@@ -678,8 +661,23 @@ test('backups sets user notification if backups have not run in over 24 hours', 
 	const viNow = vi.spyOn(Date, 'now').mockImplementation(() => now + TWENTY_FOUR_HOURS)
 
 	// Verify we have a notification
-	await pRetry(() => expect(umbreld.client.notifications.get.query()).resolves.toStrictEqual(['backups-failing']), {
-		retries: 30,
+	await pRetry(
+		() =>
+			expect(umbreld.client.notifications.get.query()).resolves.toMatchObject([
+				expect.stringMatching(/^backups-failing:/),
+			]),
+		{
+			retries: 30,
+			factor: 1,
+		},
+	)
+
+	// Add the share again so backups can complete again
+	await umbreld.client.files.addShare.mutate({path: '/Home/Backups'})
+
+	// Wait for the notification to be removed
+	await pRetry(() => expect(umbreld.client.notifications.get.query()).resolves.toHaveLength(0), {
+		retries: 65,
 		factor: 1,
 	})
 
@@ -688,9 +686,6 @@ test('backups sets user notification if backups have not run in over 24 hours', 
 
 	// Stop excessive backups
 	umbreld.instance.backups.backupInterval = 1000000
-
-	// Add the share again so shutdown can complete ok
-	await umbreld.client.files.addShare.mutate({path: '/Home/Backups'})
 })
 
 test('backup can be restored on the current Umbrel install', async () => {
@@ -743,6 +738,10 @@ test('backup can be restored on the current Umbrel install', async () => {
 
 	// Now restore should succeed with normal disk usage
 	await umbreld.client.backups.restoreBackup.mutate({backupId: latestBackup.id})
+
+	// After restore (no reboot in tests), the restore marker should exist under /import
+	const importFlagPath = `${umbreld.instance.dataDirectory}/import/${BACKUP_RESTORE_FIRST_START_FLAG}`
+	expect(await fse.pathExists(importFlagPath)).toBe(true)
 
 	// Verify we received progress events
 	expect(restoreProgressEvents.at(0)).toMatchObject({backupId: latestBackup.id, progress: 0, running: true})
@@ -821,6 +820,10 @@ test('backup can be restored on a fresh umbrel during setup', async () => {
 	const latestBackup = backups.at(-1)!
 	expect(latestBackup).toBeDefined()
 	await newUmbreld.client.backups.restoreBackup.mutate({backupId: latestBackup.id})
+
+	// After restore (no reboot in tests), the restore marker should exist under /import
+	const newImportFlagPath = `${newUmbreld.instance.dataDirectory}/import/${BACKUP_RESTORE_FIRST_START_FLAG}`
+	expect(await fse.pathExists(newImportFlagPath)).toBe(true)
 
 	// Verify we received progress events
 	expect(restoreProgressEvents.at(0)).toMatchObject({backupId: latestBackup.id, progress: 0, running: true})

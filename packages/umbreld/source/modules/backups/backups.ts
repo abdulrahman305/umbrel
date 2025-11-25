@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto'
 import nodePath from 'node:path'
 import {setTimeout} from 'node:timers/promises'
 
-import {execa, ExecaError} from 'execa'
+import {execa, ExecaError, ExecaChildProcess} from 'execa'
 import fse from 'fs-extra'
 import pQueue from 'p-queue'
 import prettyBytes from 'pretty-bytes'
@@ -14,7 +14,7 @@ import {copyWithProgress} from '../utilities/copy-with-progress.js'
 import {getSystemDiskUsage} from '../system/system.js'
 import {setSystemStatus} from '../system/routes.js'
 import {reboot} from '../system/system.js'
-
+import {BACKUP_RESTORE_FIRST_START_FLAG} from '../../constants.js'
 import type Umbreld from '../../index.js'
 import type {ProgressStatus} from '../apps/schema.js'
 
@@ -59,6 +59,7 @@ export default class Backups {
 	backupJobPromise?: Promise<void>
 	kopiaQueue = new pQueue({concurrency: 1})
 	backupDirectoryName = 'Umbrel Backup.backup'
+	runningKopiaProcesses: ExecaChildProcess[] = []
 
 	constructor(umbreld: Umbreld) {
 		this.#umbreld = umbreld
@@ -76,15 +77,6 @@ export default class Backups {
 		// Cleanup any left over backup mounts
 		await this.unmountAll().catch((error) => this.logger.error('Error unmounting backups', error))
 
-		// Ignore Downloads on first run
-		const isFirstRun = (await this.#umbreld.store.get('backups')) === undefined
-		if (isFirstRun) {
-			this.logger.log('Backup first run, adding Downloads to ignore...')
-			await this.addIgnoredPath('/Home/Downloads').catch((error) =>
-				this.logger.error('Error adding Downloads to ignore', error),
-			)
-		}
-
 		// Fire off background backup process
 		this.backupJobPromise = this.backupOnInterval().catch((error) =>
 			this.logger.error('Error running backups on interval', error),
@@ -95,12 +87,29 @@ export default class Backups {
 		this.logger.log('Stopping backups')
 		this.running = false
 
-		// Wait for any backup jobs
-		this.logger.log('Waiting for any backup jobs')
-		if (this.backupJobPromise) await this.backupJobPromise
+		const ONE_SECOND = 1000
 
-		// Cleanup any currently mounted backups
-		await this.unmountAll().catch((error) => this.logger.error('Error unmounting backups', error))
+		// Cleanup any currently mounted backups (up to 5s)
+		await Promise.race([
+			setTimeout(ONE_SECOND * 5),
+			(async () => {
+				this.logger.log('Cleaning up mounts')
+				await this.unmountAll().catch((error) => this.logger.error('Error unmounting backups', error))
+			})(),
+		])
+
+		// Kill any running kopia processes
+		for (const process of this.runningKopiaProcesses) process.kill('SIGTERM', {forceKillAfterTimeout: ONE_SECOND * 3})
+
+		// Wait for any backup jobs (up to 5s)
+		await Promise.race([
+			setTimeout(ONE_SECOND * 5),
+			(async () => {
+				this.logger.log('Waiting for any backup job to finish')
+				if (this.backupJobPromise) await this.backupJobPromise.catch(() => {})
+				await Promise.allSettled(this.runningKopiaProcesses)
+			})(),
+		])
 	}
 
 	// Run backups in background
@@ -122,6 +131,9 @@ export default class Backups {
 
 			// Run each backup
 			for (const repository of repositories) {
+				// Skip if we're shutting down
+				if (!this.running) break
+
 				// Skip if we already have a backup in progress
 				const isAlreadyBackingUp = this.backupsInProgress.some((progress) => progress.repositoryId === repository.id)
 				if (isAlreadyBackingUp) {
@@ -137,7 +149,7 @@ export default class Backups {
 				const hoursSinceLastBackup = (Date.now() - (lastBackup || this.startedAt!)) / (1000 * 60 * 60)
 				if (hoursSinceLastBackup > 24) {
 					this.logger.error(`Backup for ${repository.path} has not run in over 24 hours`)
-					await this.#umbreld.notifications.add('backups-failing').catch(() => {})
+					await this.#umbreld.notifications.add(`backups-failing:${repository.id}`).catch(() => {})
 				}
 			}
 
@@ -165,6 +177,9 @@ export default class Backups {
 		flags: string[] = [],
 		{onOutput, bypassQueue = true}: {onOutput?: (output: string) => void; bypassQueue?: boolean} = {},
 	) {
+		// Refuse to spawn new kopia processes if we're shutting down
+		if (!this.running) throw new Error('[shutting-down] Refusing to spawn new kopia processes')
+
 		const spawnKopiaProcess = async () => {
 			// Spawn process
 			const env = {
@@ -173,6 +188,13 @@ export default class Backups {
 				XDG_CONFIG_HOME: '/kopia/config',
 			}
 			const process = execa('kopia', flags, {env})
+
+			// Store reference to running process
+			this.runningKopiaProcesses.push(process)
+			// Remove the process reference once the process is no longer running
+			process
+				.finally(() => (this.runningKopiaProcesses = this.runningKopiaProcesses.filter((p) => p !== process)))
+				.catch(() => {}) // Swallow errors here to avoid unhandled promise rejections (they should be handled by the caller)
 
 			// Pipe output to verbose logger and optional onOutput handler
 			const handleOutput = (data: Buffer) => {
@@ -342,6 +364,8 @@ export default class Backups {
 					this.logger.log(`Restored ${this.restoreStatus.progress}% of backup`)
 				}
 			})
+			// We mark that the next boot is the first start after a backup restore.
+			await fse.ensureFile(`${temporaryData}/${BACKUP_RESTORE_FIRST_START_FLAG}`).catch(() => {})
 			await fse.move(temporaryData, finalData, {overwrite: true})
 			success = true
 		} finally {
@@ -499,6 +523,9 @@ export default class Backups {
 				},
 			})
 
+			// Clear any backup failure notifications if we get a successful backup
+			await this.#umbreld.notifications.clear(`backups-failing:${repository.id}`).catch(() => {})
+
 			this.logger.log(`Backed up ${repository.path}`)
 
 			// Save last backed up date
@@ -563,6 +590,9 @@ export default class Backups {
 		// Ignore non critical directories that can be rebuilt and cause a lot of churn
 		ignoreFileContents.push('app-stores')
 		ignoreFileContents.push(this.#umbreld.files.thumbnails.thumbnailDirectory)
+
+		// Ignore temporary migration directory
+		ignoreFileContents.push('.temporary-migration')
 
 		// Ignore backup mount points
 		ignoreFileContents.push(this.internalMountPath)

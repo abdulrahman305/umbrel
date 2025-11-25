@@ -8,11 +8,9 @@ ARG YQ_VERSION=4.24.5
 ARG YQ_SHA256_amd64=c93a696e13d3076e473c3a43c06fdb98fafd30dc2f43bc771c4917531961c760
 ARG YQ_SHA256_arm64=8879e61c0b3b70908160535ea358ec67989ac4435435510e1fcb2eda5d74a0e9
 
-ARG UI_BUILD_NODE_VERSION=22.13.0
-
-ARG NODE_VERSION=22.20.0
-ARG NODE_SHA256_amd64=eeaccb0378b79406f2208e8b37a62479c70595e20be6b659125eb77dd1ab2a29  
-ARG NODE_SHA256_arm64=4181609e03dcb9880e7e5bf956061ecc0503c77a480c6631d868cb1f65a2c7dd
+ARG NODE_VERSION=22.13.0
+ARG NODE_SHA256_amd64=9a33e89093a0d946c54781dcb3ccab4ccf7538a7135286528ca41ca055e9b38f  
+ARG NODE_SHA256_arm64=e0cc088cb4fb2e945d3d5c416c601e1101a15f73e0f024c9529b964d9f6dce5b
 
 ARG KOPIA_VERSION=0.19.0
 ARG KOPIA_SHA256_amd64=c07843822c82ec752e5ee749774a18820b858215aabd7da448ce665b9b9107aa
@@ -22,7 +20,7 @@ ARG KOPIA_SHA256_arm64=632db9d72f2116f1758350bf7c20aa57c22c220480aaccb5f839e7566
 # ui build stage
 #########################################################################
 
-FROM node:${UI_BUILD_NODE_VERSION}-bookworm-slim AS ui-build
+FROM node:${NODE_VERSION}-bookworm-slim AS ui-build
 
 # Install pnpm
 RUN npm install -g pnpm@8
@@ -115,11 +113,10 @@ ARG KOPIA_SHA256_amd64
 ARG KOPIA_SHA256_arm64
 
 # Install boot tooling
-# We don't actually use systemd-boot as a bootloader since Mender injects GRUB
-# but we use its systemd-repart tool to expand partitions on boot.
+# We use systemd-repart to expand partitions on boot.
 # We install mender-client via apt because injecting via mender-convert appears
 # to be broken on bookworm.
-RUN apt-get install --yes systemd-boot mender-client
+RUN apt-get install --yes systemd-repart mender-client
 
 # Install acpid
 # We use acpid to implement custom behaviour for power button presses
@@ -146,7 +143,8 @@ RUN apt-get install --yes python3 fswatch jq rsync git gettext-base gnupg procps
 # Disable automatically starting smbd and wsdd2 at boot so umbreld can initialize them only when they're needed
 RUN systemctl disable smbd wsdd2
 
-# Support for alternate filesystems
+# Filessystem support
+RUN apt-get install --yes gdisk parted e2fsprogs exfatprogs
 # For some reason this always fails on arm64 but it's ok since we
 # don't support external storage on Pi anyway.
 RUN [ "${TARGETARCH}" = "amd64" ] && apt-get install --yes ntfs-3g || true

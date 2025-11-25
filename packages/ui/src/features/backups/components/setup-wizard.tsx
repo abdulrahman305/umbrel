@@ -25,13 +25,14 @@ import {useAppsBackupIgnoredSummary} from '@/features/backups/hooks/use-apps-bac
 import {useBackupIgnoredPaths} from '@/features/backups/hooks/use-backup-ignored-paths'
 import {useBackups, type BackupDestination} from '@/features/backups/hooks/use-backups'
 import {useExistingBackupDetection} from '@/features/backups/hooks/use-existing-backup-detection'
-import {getLastPathSegment, getRelativePathFromRoot} from '@/features/backups/utils/filepath-helpers'
+import {BACKUP_FILE_NAME, getLastPathSegment, getRelativePathFromRoot} from '@/features/backups/utils/filepath-helpers'
 import {AddManuallyCard, ServerCard} from '@/features/files/components/cards/server-cards'
 import AddNetworkShareDialog from '@/features/files/components/dialogs/add-network-share-dialog'
 import {MiniBrowser} from '@/features/files/components/mini-browser'
 import {useExternalStorage} from '@/features/files/hooks/use-external-storage'
 import {useNetworkDeviceType} from '@/features/files/hooks/use-network-device-type'
 import {useNetworkStorage} from '@/features/files/hooks/use-network-storage'
+import {formatFilesystemSize} from '@/features/files/utils/format-filesystem-size'
 import {useIsMobile} from '@/hooks/use-is-mobile'
 import {useQueryParams} from '@/hooks/use-query-params'
 import {useConfirmation} from '@/providers/confirmation'
@@ -374,7 +375,14 @@ export function BackupsSetupWizard() {
 					onPasswordChange={setConnectPassword}
 					onClose={() => setConnectExistingOpen(false)}
 					onConnect={async () => {
-						await connectExistingRepository({path: folder!, password: connectPassword})
+						// Remove the backup file name from the folder path to get the repo path
+						// in case the user selected the backup file itself
+						await connectExistingRepository({
+							path: folder!.endsWith(`/${BACKUP_FILE_NAME}`)
+								? folder!.slice(0, -(BACKUP_FILE_NAME.length + 1))
+								: folder!,
+							password: connectPassword,
+						})
 						setConnectExistingOpen(false)
 						navigate('/settings/backups/configure', {preventScrollReset: true})
 					}}
@@ -398,6 +406,7 @@ function DestinationStep({
 }) {
 	const form = useFormContext<FormValues>()
 	const {params, addLinkSearchParams} = useQueryParams()
+	const navigate = useNavigate()
 	const initialTabParam = params.get('backups-setup-tab')
 	const isMobile = useIsMobile()
 
@@ -516,7 +525,7 @@ function DestinationStep({
 										selected={!!selected}
 										onClick={() => onChangeDestination({type: 'nas', host, rootPath: `/Network/${host}`})}
 									>
-										<BackupDeviceIcon path={`/Network/${host}`} connected className='mb-2 size-12 opacity-90' />
+										<BackupDeviceIcon path={`/Network/${host}`} connected className='mb-2 size-12' />
 										<span className='w-full truncate text-center text-[12px]' title={host}>
 											{host}
 										</span>
@@ -538,26 +547,58 @@ function DestinationStep({
 							<span className='text-sm text-white/40'>{t('backups.no-external-drives-detected')}</span>
 						</div>
 					) : (
-						disks.flatMap((disk) =>
-							disk.partitions.flatMap((p) => {
-								const firstMount = p.mountpoints?.[0]
-								if (!firstMount) return []
-								const label = p.label || disk.name || t('unknown')
-								const selected = currentDest?.type === 'external' && currentDest.mountpoint === firstMount
-								return [
-									<ServerCard
-										key={`${disk.id}-${p.id}-${firstMount}`}
-										selected={!!selected}
-										onClick={() => onChangeDestination({type: 'external', mountpoint: firstMount})}
-									>
-										<div className='mb-2 flex h-12 w-12 items-center justify-center'>
-											<BackupDeviceIcon path={firstMount} connected className='size-8 opacity-80' />
-										</div>
-										<div className='truncate text-center text-[12px]'>{label}</div>
-									</ServerCard>,
-								]
-							}),
-						)
+						<>
+							{/* Normal external drives that don't need formatting */}
+							{disks
+								.filter((disk) => disk.isMounted && !disk.isFormatting)
+								.flatMap((disk) =>
+									disk.partitions.flatMap((p) => {
+										const firstMount = p.mountpoints?.[0]
+										if (!firstMount) return []
+										const label = p.label || disk.name || t('unknown')
+										const selected = currentDest?.type === 'external' && currentDest.mountpoint === firstMount
+										return [
+											<ServerCard
+												key={`${disk.id}-${p.id}-${firstMount}`}
+												selected={!!selected}
+												onClick={() => onChangeDestination({type: 'external', mountpoint: firstMount})}
+											>
+												<div className='mb-2 flex h-12 w-12 items-center justify-center'>
+													<BackupDeviceIcon path={firstMount} connected className='size-11' />
+												</div>
+												<div className='w-full truncate text-center text-[12px]'>{label}</div>
+												<div className='w-full truncate text-center text-[11px] text-white/40'>
+													{formatFilesystemSize(p.size)}
+												</div>
+											</ServerCard>,
+										]
+									}),
+								)}
+							{/* External drives that need formatting */}
+							{disks
+								.filter((disk) => !disk.isMounted || disk.isFormatting)
+								.map((disk) => {
+									const label = disk.name || t('unknown')
+									return (
+										<ServerCard
+											key={`${disk.id}-requires-format`}
+											selected={false}
+											onClick={() => {
+												if (disk.isFormatting) return
+												navigate(`/files/Home?dialog=files-format-drive&deviceId=${disk.id}`)
+											}}
+										>
+											<div className='mb-2 flex h-12 w-12 items-center justify-center'>
+												<BackupDeviceIcon path='' connected={false} className='size-11' />
+											</div>
+											<div className='w-full truncate text-center text-[12px]'>{label}</div>
+											<div className='w-full truncate text-center text-[11px] text-white/40'>
+												{disk.isFormatting ? t('files-format.formatting') : t('files-format.title-requires-format')}
+											</div>
+										</ServerCard>
+									)
+								})}
+						</>
 					)}
 				</div>
 			) : tab === 'umbrel-private-cloud' ? (

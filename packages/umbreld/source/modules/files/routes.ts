@@ -4,7 +4,7 @@ import {router, privateProcedure, publicProcedureWhenNoUserExists} from '../serv
 
 export default router({
 	// List a directory
-	list: privateProcedure
+	list: publicProcedureWhenNoUserExists
 		.input(
 			z.object({
 				path: z.string(),
@@ -134,7 +134,8 @@ export default router({
 	recents: privateProcedure.query(async ({ctx}) => ctx.umbreld.files.recents.get()),
 
 	// Get view preferences
-	viewPreferences: privateProcedure.query(async ({ctx}) => ctx.umbreld.files.getViewPreferences()),
+	// Public only when no user exists for onboarding restore flow (returns defaults); private once a user exists
+	viewPreferences: publicProcedureWhenNoUserExists.query(async ({ctx}) => ctx.umbreld.files.getViewPreferences()),
 
 	// Update view preferences
 	updateViewPreferences: privateProcedure
@@ -178,9 +179,20 @@ export default router({
 		.input(z.object({path: z.string()}))
 		.mutation(async ({ctx, input}) => ctx.umbreld.files.samba.removeShare(input.path)),
 
-	// Get mounted external storage devices
-	mountedExternalDevices: privateProcedure.query(async ({ctx}) =>
-		ctx.umbreld.files.externalStorage.getMountedExternalDevices(),
+	// Format an external device
+	formatExternalDevice: privateProcedure
+		.input(
+			z.object({
+				deviceId: z.string(),
+				filesystem: z.enum(['ext4', 'exfat']),
+				label: z.string(),
+			}),
+		)
+		.mutation(async ({ctx, input}) => ctx.umbreld.files.externalStorage.formatExternalDevice(input)),
+
+	// Get external storage devices
+	externalDevices: publicProcedureWhenNoUserExists.query(async ({ctx}) =>
+		ctx.umbreld.files.externalStorage.getExternalDevicesWithVirtualMountPoints(),
 	),
 
 	// Unmount an external device
@@ -206,7 +218,9 @@ export default router({
 		.query(async ({ctx, input}) => ctx.umbreld.files.search.search(input.query, input.maxResults)),
 
 	// List network shares
-	listNetworkShares: privateProcedure.query(async ({ctx}) => ctx.umbreld.files.networkStorage.getShareInfo()),
+	listNetworkShares: publicProcedureWhenNoUserExists.query(async ({ctx}) =>
+		ctx.umbreld.files.networkStorage.getShareInfo(),
+	),
 
 	// Add a network share
 	addNetworkShare: publicProcedureWhenNoUserExists
@@ -226,12 +240,12 @@ export default router({
 		.mutation(async ({ctx, input}) => ctx.umbreld.files.networkStorage.removeShare(input.mountPath)),
 
 	// Discover available network share servers
-	discoverNetworkShareServers: privateProcedure.query(async ({ctx}) =>
+	discoverNetworkShareServers: publicProcedureWhenNoUserExists.query(async ({ctx}) =>
 		ctx.umbreld.files.networkStorage.discoverServers(),
 	),
 
 	// Discover shares for a given samba server
-	discoverNetworkSharesOnServer: privateProcedure
+	discoverNetworkSharesOnServer: publicProcedureWhenNoUserExists
 		.input(z.object({host: z.string(), username: z.string(), password: z.string()}))
 		.query(async ({ctx, input}) =>
 			ctx.umbreld.files.networkStorage.discoverSharesOnServer(input.host, input.username, input.password),
